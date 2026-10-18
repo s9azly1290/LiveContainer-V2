@@ -1,30 +1,12 @@
-# =============================================================================
-#  codemagic.yaml — LiveContainer
-# =============================================================================
-#
-#  الأسماء متحقّقة من الـ source:
-#     Project : LiveContainer.xcodeproj
-#     Scheme  : LiveContainer
-#     iOS     : 15.0  |  Swift 5.0  |  Xcode 16 (objectVersion 73)
-#     Submodules: fishhook · OpenSSL · litehook
-#
-#  ⚠️ Codemagic عايز 'workflows:' في الـ root — 'configs:' لوحدها بتدي
-#     "Configuration file error: 'workflows' key is missing in the root"
-# =============================================================================
-
 name: LiveContainer
 
 options:
   minimum_xcode_version: "16.0"
 
-environment:
-  LC_ALL: "en_US.UTF-8"
-  COCOAPODS_DISABLE_STATS: "true"
-
 workflows:
 
   # ══════════════════════════════════════════════════════════════════════════
-  #  unsigned — ابدأ هنا، مش محتاج أي شهادة
+  #  unsigned — ابدأ هنا. مش محتاج أي شهادة.
   # ══════════════════════════════════════════════════════════════════════════
   unsigned:
     name: unsigned
@@ -32,15 +14,17 @@ workflows:
     max_build_duration: 60
 
     environment:
-      CODE_SIGNING_ALLOWED: "NO"
-      CODE_SIGNING_REQUIRED: "NO"
-      CODE_SIGN_IDENTITY: ""
-      CODE_SIGN_ENTITLEMENTS: ""
+      xcode: latest
+      vars:
+        XCODE_PROJECT: LiveContainer.xcodeproj
+        XCODE_SCHEME: LiveContainer
+        BUILD_CONFIG: Release
 
     scripts:
       - name: Init submodules
         script: |
           set -e
+          cd "$CM_BUILD_DIR"
           git submodule sync --recursive
           git submodule update --init --recursive
           echo "--- submodules ---"
@@ -48,76 +32,78 @@ workflows:
             if [ -d "$d" ]; then echo "  $d OK"; else echo "  $d MISSING"; fi
           done
 
-      - name: Show settings
+      - name: Build (unsigned)
         script: |
-          xcodebuild -project LiveContainer.xcodeproj \
-                     -target LiveContainer -showBuildSettings 2>/dev/null \
-            | grep -E "PRODUCT_NAME|PRODUCT_BUNDLE_IDENTIFIER|SWIFT_VERSION|IPHONEOS_DEPLOYMENT_TARGET" \
-            | head -10
+          set -o pipefail
+          cd "$CM_BUILD_DIR"
+          xcodebuild build \
+            -project "$XCODE_PROJECT" \
+            -scheme "$XCODE_SCHEME" \
+            -configuration "$BUILD_CONFIG" \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$CM_BUILD_DIR/derived_data" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            2>&1 | tee "$CM_BUILD_DIR/build.log" | grep -E "error:|warning: .*(deprecat|unused)|BUILD" | head -60
 
-    xcode-build:
-      project_path: LiveContainer.xcodeproj
-      scheme: LiveContainer
-      targets:
-        LiveContainer:
-          config: Release
-
-    post_build_script: |
-      set -e
-      APP=$(find "$HOME/derived_data/Build/Products/Release-iphoneos" \
-                -maxdepth 1 -name "*.app" | head -1)
-      if [ -z "$APP" ]; then
-        echo "ERROR: no .app produced"
-        exit 1
-      fi
-      echo "built: $APP"
-      rm -rf "$APP/_CodeSignature" 2>/dev/null || true
-      mkdir -p "$CM_BUILD_DIR/artifacts"
-      cp -R "$APP" "$CM_BUILD_DIR/artifacts/"
-      du -sh "$CM_BUILD_DIR/artifacts"
+      - name: Strip signature
+        script: |
+          set -e
+          APP=$(find "$CM_BUILD_DIR/derived_data/Build/Products" -maxdepth 1 -name "*.app" | head -1)
+          if [ -z "$APP" ]; then
+            echo "ERROR: no .app produced"
+            echo "--- last errors ---"
+            grep -iE "error:" "$CM_BUILD_DIR/build.log" | head -30 || true
+            exit 1
+          fi
+          echo "built: $APP"
+          rm -rf "$APP/_CodeSignature" 2>/dev/null || true
+          du -sh "$APP"
 
     artifacts:
-      - path: "artifacts/**/*.app"
-        name: LiveContainer-unsigned
+      - $CM_BUILD_DIR/derived_data/Build/Products/**/*.app
+      - $CM_BUILD_DIR/build.log
 
   # ══════════════════════════════════════════════════════════════════════════
-  #  adhoc — موقّع، محتاج ترفع p12 + profile في Codemagic UI
+  #  adhoc — موقّع. محتاج ترفع p12 + profile في Codemagic UI.
   # ══════════════════════════════════════════════════════════════════════════
   adhoc:
     name: adhoc
     instance_type: mac_mini_m2
     max_build_duration: 60
 
-    ios_signing:
-      distribution_type: ad_hoc
-      certificate_id: ${CERTIFICATE_ID}
-      provisioning_profile_id: ${PROVISIONING_PROFILE_ID}
+    environment:
+      xcode: latest
+      vars:
+        XCODE_PROJECT: LiveContainer.xcodeproj
+        XCODE_SCHEME: LiveContainer
+        BUNDLE_ID: com.kdt.livecontainer
+      ios_signing:
+        distribution_type: ad_hoc
+        bundle_identifier: com.kdt.livecontainer
 
     scripts:
       - name: Init submodules
         script: |
           set -e
+          cd "$CM_BUILD_DIR"
           git submodule sync --recursive
           git submodule update --init --recursive
 
-    xcode-build:
-      project_path: LiveContainer.xcodeproj
-      scheme: LiveContainer
-      targets:
-        LiveContainer:
-          config: Release
-          export_method: ad-hoc
+      - name: Set up provisioning profiles
+        script: xcode-project use-profiles
+
+      - name: Build ipa
+        script: |
+          set -o pipefail
+          cd "$CM_BUILD_DIR"
+          xcode-project build-ipa \
+            --project "$CM_BUILD_DIR/$XCODE_PROJECT" \
+            --scheme "$XCODE_SCHEME"
 
     artifacts:
-      - path: "**/*.ipa"
-        name: LiveContainer-ipa
-
-# =============================================================================
-#  الاستخدام:
-#    Codemagic → Start new build → workflow: unsigned
-#
-#  ملاحظات:
-#   • الحساب المجاني (Personal Team) → 7 أيام، ومفيش App Groups
-#   • unsigned build بيشتغل على جهاز فيه Developer Mode
-#   • OpenSSL submodule كبير — أول build ممكن ياخد 15 دقيقة
-# =============================================================================
+      - build/ios/ipa/*.ipa
+      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.app
+      - /tmp/xcodebuild_logs/*.log
