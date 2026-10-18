@@ -68,21 +68,19 @@ configs:
           LiveContainer:
             config: Release
 
-      scripts:
-        - name: Collect app
-          script: |
-            set -e
-            APP=$(find "$HOME/derived_data/Build/Products/Release-iphoneos" \
-                      -maxdepth 1 -name "*.app" | head -1)
-            if [ -z "$APP" ]; then
-              echo "ERROR: no .app produced"
-              exit 1
-            fi
-            echo "built: $APP"
-            rm -rf "$APP/_CodeSignature" 2>/dev/null || true
-            mkdir -p "$CM_BUILD_DIR/artifacts"
-            cp -R "$APP" "$CM_BUILD_DIR/artifacts/"
-            du -sh "$CM_BUILD_DIR/artifacts"
+      post_build_script: |
+        set -e
+        APP=$(find "$HOME/derived_data/Build/Products/Release-iphoneos" \
+                  -maxdepth 1 -name "*.app" | head -1)
+        if [ -z "$APP" ]; then
+          echo "ERROR: no .app produced"
+          exit 1
+        fi
+        echo "built: $APP"
+        rm -rf "$APP/_CodeSignature" 2>/dev/null || true
+        mkdir -p "$CM_BUILD_DIR/artifacts"
+        cp -R "$APP" "$CM_BUILD_DIR/artifacts/"
+        du -sh "$CM_BUILD_DIR/artifacts"
 
       artifacts:
         - path: "artifacts/**/*.app"
