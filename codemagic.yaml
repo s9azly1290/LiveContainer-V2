@@ -3,33 +3,32 @@
 # =============================================================================
 #
 #  الأسماء متحقّقة من الـ source:
-#     Project   : LiveContainer.xcodeproj
-#     Schemes   : LiveContainer · LiveContainerSwiftUI · LiveProcess
-#     iOS       : 15.0   |   Swift 5.0   |   Xcode 16 (objectVersion 73)
-#     Submodules : fishhook · OpenSSL · litehook
+#     Project : LiveContainer.xcodeproj
+#     Scheme  : LiveContainer
+#     iOS     : 15.0  |  Swift 5.0  |  Xcode 16 (objectVersion 73)
+#     Submodules: fishhook · OpenSSL · litehook
+#
+#  ⚠️ Codemagic عايز 'workflows:' في الـ root — 'configs:' لوحدها بتدي
+#     "Configuration file error: 'workflows' key is missing in the root"
 # =============================================================================
 
 name: LiveContainer
 
 options:
   minimum_xcode_version: "16.0"
-  instance_type: mac_mini_m2
-  max_build_duration: 60
 
 environment:
   LC_ALL: "en_US.UTF-8"
   COCOAPODS_DISABLE_STATS: "true"
-  # لو الحساب مجاني، ده بيلغي التوقيع خالص
-  CODE_SIGNING_ALLOWED: "NO"
-  CODE_SIGNING_REQUIRED: "NO"
 
-configs:
+workflows:
 
   # ══════════════════════════════════════════════════════════════════════════
-  #  unsigned — ابدأ هنا. مش محتاج أي شهادة.
+  #  unsigned — ابدأ هنا، مش محتاج أي شهادة
   # ══════════════════════════════════════════════════════════════════════════
   unsigned:
     name: unsigned
+    instance_type: mac_mini_m2
     max_build_duration: 60
 
     environment:
@@ -38,59 +37,55 @@ configs:
       CODE_SIGN_IDENTITY: ""
       CODE_SIGN_ENTITLEMENTS: ""
 
-    build:
-      scripts:
-        - name: Init submodules
-          script: |
-            set -e
-            git submodule sync --recursive
-            git submodule update --init --recursive
-            echo "--- submodules ready ---"
-            for d in fishhook litehook OpenSSL; do
-              if [ -d "$d" ]; then
-                echo "  $d OK"
-              else
-                echo "  $d MISSING"
-              fi
-            done
+    scripts:
+      - name: Init submodules
+        script: |
+          set -e
+          git submodule sync --recursive
+          git submodule update --init --recursive
+          echo "--- submodules ---"
+          for d in fishhook litehook OpenSSL; do
+            if [ -d "$d" ]; then echo "  $d OK"; else echo "  $d MISSING"; fi
+          done
 
-        - name: Show settings
-          script: |
-            xcodebuild -project LiveContainer.xcodeproj \
-                       -target LiveContainer -showBuildSettings 2>/dev/null \
-              | grep -E "PRODUCT_NAME|PRODUCT_BUNDLE_IDENTIFIER|SWIFT_VERSION|IPHONEOS_DEPLOYMENT_TARGET" \
-              | head -10
+      - name: Show settings
+        script: |
+          xcodebuild -project LiveContainer.xcodeproj \
+                     -target LiveContainer -showBuildSettings 2>/dev/null \
+            | grep -E "PRODUCT_NAME|PRODUCT_BUNDLE_IDENTIFIER|SWIFT_VERSION|IPHONEOS_DEPLOYMENT_TARGET" \
+            | head -10
 
-      xcode-build:
-        project_path: LiveContainer.xcodeproj
-        scheme: LiveContainer
-        targets:
-          LiveContainer:
-            config: Release
+    xcode-build:
+      project_path: LiveContainer.xcodeproj
+      scheme: LiveContainer
+      targets:
+        LiveContainer:
+          config: Release
 
-      post_build_script: |
-        set -e
-        APP=$(find "$HOME/derived_data/Build/Products/Release-iphoneos" \
-                  -maxdepth 1 -name "*.app" | head -1)
-        if [ -z "$APP" ]; then
-          echo "ERROR: no .app produced"
-          exit 1
-        fi
-        echo "built: $APP"
-        rm -rf "$APP/_CodeSignature" 2>/dev/null || true
-        mkdir -p "$CM_BUILD_DIR/artifacts"
-        cp -R "$APP" "$CM_BUILD_DIR/artifacts/"
-        du -sh "$CM_BUILD_DIR/artifacts"
+    post_build_script: |
+      set -e
+      APP=$(find "$HOME/derived_data/Build/Products/Release-iphoneos" \
+                -maxdepth 1 -name "*.app" | head -1)
+      if [ -z "$APP" ]; then
+        echo "ERROR: no .app produced"
+        exit 1
+      fi
+      echo "built: $APP"
+      rm -rf "$APP/_CodeSignature" 2>/dev/null || true
+      mkdir -p "$CM_BUILD_DIR/artifacts"
+      cp -R "$APP" "$CM_BUILD_DIR/artifacts/"
+      du -sh "$CM_BUILD_DIR/artifacts"
 
-      artifacts:
-        - path: "artifacts/**/*.app"
-          name: LiveContainer-unsigned
+    artifacts:
+      - path: "artifacts/**/*.app"
+        name: LiveContainer-unsigned
 
   # ══════════════════════════════════════════════════════════════════════════
-  #  adhoc — موقّع. محتاج ترفع الـ p12 والـ profile في Codemagic UI.
+  #  adhoc — موقّع، محتاج ترفع p12 + profile في Codemagic UI
   # ══════════════════════════════════════════════════════════════════════════
   adhoc:
     name: adhoc
+    instance_type: mac_mini_m2
     max_build_duration: 60
 
     ios_signing:
@@ -98,45 +93,31 @@ configs:
       certificate_id: ${CERTIFICATE_ID}
       provisioning_profile_id: ${PROVISIONING_PROFILE_ID}
 
-    build:
-      scripts:
-        - name: Init submodules
-          script: |
-            set -e
-            git submodule sync --recursive
-            git submodule update --init --recursive
+    scripts:
+      - name: Init submodules
+        script: |
+          set -e
+          git submodule sync --recursive
+          git submodule update --init --recursive
 
-      xcode-build:
-        project_path: LiveContainer.xcodeproj
-        scheme: LiveContainer
-        targets:
-          LiveContainer:
-            config: Release
-            export_method: ad-hoc
+    xcode-build:
+      project_path: LiveContainer.xcodeproj
+      scheme: LiveContainer
+      targets:
+        LiveContainer:
+          config: Release
+          export_method: ad-hoc
 
-      artifacts:
-        - path: "**/*.ipa"
-          name: LiveContainer-ipa
+    artifacts:
+      - path: "**/*.ipa"
+        name: LiveContainer-ipa
 
 # =============================================================================
-#  الاستخدام
-#
-#  1) ارفع الشهادات:
-#       Codemagic → Team settings → Code signing
-#         Certificates  → ارفع .p12 + الباسورد
-#         Profiles      → ارفع .mobileprovision
-#
-#  2) حط الـ IDs كـ Environment variables في صفحة الـ app:
-#       CERTIFICATE_ID              = <id من صفحة certificates>
-#       PROVISIONING_PROFILE_ID     = <id من صفحة profiles>
-#
-#  3) Trigger build واختار config:
-#       unsigned  →  للاختبار، مفيش توقيع
-#       adhoc     →  موقّع
+#  الاستخدام:
+#    Codemagic → Start new build → workflow: unsigned
 #
 #  ملاحظات:
-#   • الحساب المجاني (Personal Team) → 7 أيام، ومفيش App Groups.
-#     الـ unsigned build هيشتغل بس مش هيتثبت على جهاز عادي.
-#   • ليشتغل على جهاز حقيقي: Developer Mode (iOS 16+) مطلوب.
-#   • OpenSSL submodule كبير — أول build ممكن ياخد 15 دقيقة.
+#   • الحساب المجاني (Personal Team) → 7 أيام، ومفيش App Groups
+#   • unsigned build بيشتغل على جهاز فيه Developer Mode
+#   • OpenSSL submodule كبير — أول build ممكن ياخد 15 دقيقة
 # =============================================================================
