@@ -1,0 +1,137 @@
+# =============================================================================
+#  codemagic.yaml — LiveContainer
+# =============================================================================
+#
+#  ✅ الأسماء متحقّقة من الـ source:
+#     Project          : LiveContainer.xcodeproj
+#     Schemes          : LiveContainer · LiveContainerSwiftUI · LiveProcess
+#     Deployment target: iOS 15.0
+#     Swift            : 5.0
+#     objectVersion    : 73  (Xcode 16+ مطلوب للـ synchronized groups)
+#     Submodules        : fishhook · OpenSSL · litehook
+#
+#  ⚠️ التوقيع:
+#     الحساب المجاني → 7 أيام + مفيش App Groups
+#     الحساب المدفوع ($99) → كل الـ entitlements + سنة كاملة
+# =============================================================================
+
+name: LiveContainer
+
+options:
+  minimum_xcode_version: "16.0"
+
+  machine:
+    macos: yes
+
+  # mac runners حقيقي — Xcode 16 مطلوب (objectVersion 73)
+  instance_type: mac_mini_m2
+
+configs:
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  #  Build بدون توقيع — للاختبار فقط (بيحتاج Developer Mode على الجهاز)
+  # ─────────────────────────────────────────────────────────────────────────────
+  build:
+    name: LiveContainer (unsigned)
+    max_build_duration: 60
+
+    environment:
+      LC_ALL: "en_US.UTF-8"
+      # منع Xcode من محاولة التوقيع التلقائي
+      CODE_SIGNING_REQUIRED: "NO"
+      CODE_SIGNING_ALLOWED: "NO"
+      CODE_SIGN_IDENTITY: ""
+
+    build:
+      scripts:
+        # ⚠️ ده أهم step — من غيره الـ build بيفشل
+        - name: Init submodules
+          script: |
+            set -e
+            git submodule sync --recursive
+            git submodule update --init --recursive
+            echo "--- submodules ---"
+            ls -la fishhook/ litehook/ 2>&1 | head -20
+            test -d OpenSSL && echo "OpenSSL ✓" || echo "OpenSSL ✗"
+
+        - name: Show resolved build settings
+          script: |
+            xcodebuild -project LiveContainer.xcodeproj -target LiveContainer \
+                       -showBuildSettings 2>/dev/null \
+              | grep -E "PRODUCT_BUNDLE_IDENTIFIER|PRODUCT_NAME|CODE_SIGN_ENTITLEMENTS|DEVELOPMENT_TEAM|SWIFT_VERSION|IPHONEOS_DEPLOYMENT_TARGET" \
+              | head -20
+
+      xcode-build:
+        project_path: LiveContainer.xcodeproj
+        scheme: LiveContainer
+        targets:
+          LiveContainer:
+            config: Release
+
+      # طلّع الـ .app كـ artifact (بدون signature)
+      scripts:
+        - name: Collect app
+          script: |
+            APP=$(find "$HOME/derived_data/Build/Products/Release-iphoneos" -maxdepth 1 -name "*.app" | head -1)
+            if [ -z "$APP" ]; then
+              echo "❌ مفيش .app اتبنى"
+              exit 1
+            fi
+            echo "✅ $APP"
+            ls -la "$APP" | head -20
+
+            # شيل أي توقيع قديم
+            rm -rf "$APP/_CodeSignature" 2>/dev/null || true
+
+            mkdir -p "$CM_BUILD_DIR/artifacts"
+            cp -R "$APP" "$CM_BUILD_DIR/artifacts/"
+
+      artifacts:
+        - path: "artifacts/**/*.app"
+          name: LiveContainer-unsigned
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  #  Ad-Hoc موقّع — محتاج حساب Apple
+  # ─────────────────────────────────────────────────────────────────────────────
+  release:
+    name: LiveContainer (signed)
+    max_build_duration: 60
+
+    ios_signing:
+      # ⚠️ من Codemagic → Team settings → Code signing
+      #    ارفع .p12 + .mobileprovision من الـ UI
+      distribution_type: ad_hoc
+      certificate_id: ${CERTIFICATE_ID}
+      provisioning_profile_id: ${PROVISIONING_PROFILE_ID}
+
+    build:
+      scripts:
+        - name: Init submodules
+          script: |
+            set -e
+            git submodule sync --recursive
+            git submodule update --init --recursive
+
+      xcode-build:
+        project_path: LiveContainer.xcodeproj
+        scheme: LiveContainer
+        targets:
+          LiveContainer:
+            config: Release
+            export_method: ad-hoc
+
+      artifacts:
+        - path: "**/*.ipa"
+          name: LiveContainer-ipa
+
+# =============================================================================
+#  أول build:
+#    - 10-15 دقيقة (submodules + build كامل)
+#    - mac_mini_m2 ≈ 120 دقيقة/شهر على الـ free plan
+#
+#  لو فشل بـ "No profile" أو "entitlement":
+#    → الحساب مجاني، جرّب config: build (unsigned)
+#
+#  ⚠️ راجع:
+#    submodule default branch لـ OpenSSL — ممكن كبير وبياخد وقت
+# =============================================================================
