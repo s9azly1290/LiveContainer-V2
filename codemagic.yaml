@@ -52,21 +52,27 @@ workflows:
           fi
           ls OpenSSL/Frameworks/
 
-      - name: Build (unsigned)
+      - name: Build (ad-hoc signed)
         script: |
           set -o pipefail
           cd "$CM_BUILD_DIR"
+          # NOTE: signing is *disabled by turning it into ad-hoc* ("-"), not
+          # switched off. With CODE_SIGNING_ALLOWED=NO Xcode refuses to
+          # validate prebuilt slices and fails with:
+          #   "OpenSSL.xcframework" is not signed with the expected identity
           xcodebuild build \
             -project "$XCODE_PROJECT" \
             -scheme "$XCODE_SCHEME" \
             -configuration "$BUILD_CONFIG" \
             -destination 'generic/platform=iOS' \
             -derivedDataPath "$CM_BUILD_DIR/derived_data" \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=YES \
+            CODE_SIGNING_ALLOWED=YES \
             CODE_SIGN_ENTITLEMENTS="" \
-            2>&1 | tee "$CM_BUILD_DIR/build.log" | grep -E "error:|warning: .*(deprecat|unused)|BUILD" | head -60
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            2>&1 | tee "$CM_BUILD_DIR/build.log" \
+              | grep -E "error:|BUILD (SUCCEEDED|FAILED)" | head -60
 
       - name: Strip signature
         script: |
