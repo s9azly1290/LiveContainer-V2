@@ -5,9 +5,6 @@ options:
 
 workflows:
 
-  # ══════════════════════════════════════════════════════════════════════════
-  #  unsigned — ابدأ هنا. مش محتاج أي شهادة.
-  # ══════════════════════════════════════════════════════════════════════════
   unsigned:
     name: unsigned
     instance_type: mac_mini_m2
@@ -27,7 +24,6 @@ workflows:
           cd "$CM_BUILD_DIR"
           git submodule sync --recursive
           git submodule update --init --recursive || true
-          echo "--- submodules ---"
           for d in fishhook litehook OpenSSL; do
             if [ -d "$d" ]; then echo "  $d OK"; else echo "  $d MISSING"; fi
           done
@@ -36,8 +32,6 @@ workflows:
         script: |
           set -e
           cd "$CM_BUILD_DIR"
-          # Fallback: if the submodule did not provide the
-          # xcframework, fetch just that slice from upstream.
           if [ ! -d "OpenSSL/Frameworks/OpenSSL.xcframework" ]; then
             echo "xcframework missing -> fetching from upstream"
             rm -rf /tmp/ossl
@@ -46,11 +40,9 @@ workflows:
             mkdir -p OpenSSL/Frameworks
             cp -R /tmp/ossl/Frameworks/OpenSSL.xcframework OpenSSL/Frameworks/
             rm -rf /tmp/ossl
-            echo "xcframework restored"
           else
             echo "xcframework present"
           fi
-          ls OpenSSL/Frameworks/
 
       - name: Re-sign OpenSSL xcframework
         script: |
@@ -58,23 +50,24 @@ workflows:
           cd "$CM_BUILD_DIR"
           XCF="OpenSSL/Frameworks/OpenSSL.xcframework"
 
-          # Xcode refuses prebuilt xcframework slices that carry a foreign
-          # signature, even when the app itself is ad-hoc signed:
-          #   "OpenSSL.xcframework" is not signed with the expected identity
-          # Fix: strip every existing signature, then re-sign ad-hoc.
-          echo "--- stripping signatures ---"
-          find "$XCF" -type f ! -name "*.plist" ! -name "*.txt" ! -name "*.json" \
-            | while read -r f; do
-              if file "$f" 2>/dev/null | grep -q "Mach-O"; then
-                codesign --remove-signature "$f" 2>/dev/null || true
-              fi
-            done
+          # Xcode produces two different errors here:
+          #   "is not signed with the expected identity"
+          #   "The signature of OpenSSL.xcframework cannot be verified"
+          # Both come from signatures baked into the prebuilt slices.
+          # Removing a signature without recreating it makes it worse, so
+          # delete every artefact first, then rebuild ad-hoc from the
+          # inside out: Mach-O binaries first, framework bundles after.
 
-          echo "--- ad-hoc signing binaries ---"
+          echo "--- 1. remove signature artefacts ---"
+          find "$XCF" -type d -name "_CodeSignature" -prune -exec rm -rf {} + 2>/dev/null || true
+          find "$XCF" -type f -name "CodeResources" -delete 2>/dev/null || true
+          rm -rf "$XCF/_CodeSignature" 2>/dev/null || true
+
+          echo "--- 2. ad-hoc sign Mach-O binaries ---"
           find "$XCF" -type f ! -name "*.plist" ! -name "*.txt" ! -name "*.json" \
             | while read -r f; do
               if file "$f" 2>/dev/null | grep -q "Mach-O"; then
-                if codesign --force --sign - "$f" >/dev/null 2>&1; then
+                if codesign --force --sign - --timestamp=none "$f" >/dev/null 2>&1; then
                   echo "  ok   $(basename "$f")"
                 else
                   echo "  FAIL $(basename "$f")"
@@ -82,26 +75,30 @@ workflows:
               fi
             done
 
-          echo "--- signing framework wrappers ---"
+          echo "--- 3. ad-hoc sign framework bundles ---"
           find "$XCF" -type d -name "*.framework" | while read -r fw; do
-            if codesign --force --sign - "$fw" >/dev/null 2>&1; then
+            if codesign --force --sign - --timestamp=none "$fw" >/dev/null 2>&1; then
               echo "  ok   $(basename "$fw")"
             else
               echo "  FAIL $fw"
             fi
           done
 
-          echo "--- verify ---"
-          codesign -dv "$XCF/ios-arm64/OpenSSL.framework" 2>&1 | head -3 || true
+          echo "--- 4. verify ---"
+          for fw in "$XCF"/*/OpenSSL.framework; do
+            if [ -d "$fw" ]; then
+              if codesign -v "$fw" >/dev/null 2>&1; then
+                echo "  valid:   $(basename "$(dirname "$fw")")"
+              else
+                echo "  INVALID: $(basename "$(dirname "$fw")")"
+              fi
+            fi
+          done
 
       - name: Build (ad-hoc signed)
         script: |
           set -o pipefail
           cd "$CM_BUILD_DIR"
-          # NOTE: signing is *disabled by turning it into ad-hoc* ("-"), not
-          # switched off. With CODE_SIGNING_ALLOWED=NO Xcode refuses to
-          # validate prebuilt slices and fails with:
-          #   "OpenSSL.xcframework" is not signed with the expected identity
           xcodebuild build \
             -project "$XCODE_PROJECT" \
             -scheme "$XCODE_SCHEME" \
@@ -122,7 +119,6 @@ workflows:
           APP=$(find "$CM_BUILD_DIR/derived_data/Build/Products" -maxdepth 1 -name "*.app" | head -1)
           if [ -z "$APP" ]; then
             echo "ERROR: no .app produced"
-            echo "--- last errors ---"
             grep -iE "error:" "$CM_BUILD_DIR/build.log" | head -30 || true
             exit 1
           fi
@@ -134,9 +130,6 @@ workflows:
       - $CM_BUILD_DIR/derived_data/Build/Products/**/*.app
       - $CM_BUILD_DIR/build.log
 
-  # ══════════════════════════════════════════════════════════════════════════
-  #  adhoc — موقّع. محتاج ترفع p12 + profile في Codemagic UI.
-  # ══════════════════════════════════════════════════════════════════════════
   adhoc:
     name: adhoc
     instance_type: mac_mini_m2
