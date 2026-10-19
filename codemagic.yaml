@@ -63,6 +63,20 @@ workflows:
           find "$XCF" -type f -name "CodeResources" -delete 2>/dev/null || true
           rm -rf "$XCF/_CodeSignature" 2>/dev/null || true
 
+          echo "--- 1b. strip signing identity from Info.plist ---"
+          # Even after re-signing, Xcode rejects the xcframework because the
+          # slice Info.plists still advertise the ORIGINAL team. Xcode reads
+          # TeamIdentifier/SigningIdentity and compares it to the expected
+          # identity, which is how "is not signed with the expected identity"
+          # survives a valid re-sign.
+          find "$XCF" -name "Info.plist" | while read -r p; do
+            for key in TeamIdentifier SigningIdentity SigningAuthority; do
+              if /usr/libexec/PlistBuddy -c "Print :$key" "$p" >/dev/null 2>&1; then
+                /usr/libexec/PlistBuddy -c "Delete :$key" "$p" >/dev/null 2>&1                   && echo "  removed $key from $p"
+              fi
+            done
+          done
+
           echo "--- 2. ad-hoc sign Mach-O binaries ---"
           find "$XCF" -type f ! -name "*.plist" ! -name "*.txt" ! -name "*.json" \
             | while read -r f; do
