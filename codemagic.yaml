@@ -52,6 +52,48 @@ workflows:
           fi
           ls OpenSSL/Frameworks/
 
+      - name: Re-sign OpenSSL xcframework
+        script: |
+          set -e
+          cd "$CM_BUILD_DIR"
+          XCF="OpenSSL/Frameworks/OpenSSL.xcframework"
+
+          # Xcode refuses prebuilt xcframework slices that carry a foreign
+          # signature, even when the app itself is ad-hoc signed:
+          #   "OpenSSL.xcframework" is not signed with the expected identity
+          # Fix: strip every existing signature, then re-sign ad-hoc.
+          echo "--- stripping signatures ---"
+          find "$XCF" -type f ! -name "*.plist" ! -name "*.txt" ! -name "*.json" \
+            | while read -r f; do
+              if file "$f" 2>/dev/null | grep -q "Mach-O"; then
+                codesign --remove-signature "$f" 2>/dev/null || true
+              fi
+            done
+
+          echo "--- ad-hoc signing binaries ---"
+          find "$XCF" -type f ! -name "*.plist" ! -name "*.txt" ! -name "*.json" \
+            | while read -r f; do
+              if file "$f" 2>/dev/null | grep -q "Mach-O"; then
+                if codesign --force --sign - "$f" >/dev/null 2>&1; then
+                  echo "  ok   $(basename "$f")"
+                else
+                  echo "  FAIL $(basename "$f")"
+                fi
+              fi
+            done
+
+          echo "--- signing framework wrappers ---"
+          find "$XCF" -type d -name "*.framework" | while read -r fw; do
+            if codesign --force --sign - "$fw" >/dev/null 2>&1; then
+              echo "  ok   $(basename "$fw")"
+            else
+              echo "  FAIL $fw"
+            fi
+          done
+
+          echo "--- verify ---"
+          codesign -dv "$XCF/ios-arm64/OpenSSL.framework" 2>&1 | head -3 || true
+
       - name: Build (ad-hoc signed)
         script: |
           set -o pipefail
