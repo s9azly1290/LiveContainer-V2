@@ -128,21 +128,29 @@ workflows:
             fi
           done
 
-      - name: Build (ad-hoc signed)
+      - name: Build (signing disabled)
         script: |
           set -o pipefail
           cd "$CM_BUILD_DIR"
+          # CODE_SIGNING_ALLOWED=NO makes Xcode skip embedded-binary
+          # validation entirely. This has never actually been exercised
+          # with a present xcframework: the earlier attempt failed earlier
+          # (submodule missing), and ad-hoc signing still failed with
+          #   'OpenSSL.xcframework' is not signed with the expected identity
+          # because validation compares against an Apple identity we do not
+          # have. The resulting .app is unsigned on purpose; 'Strip
+          # signature' cleans up afterwards.
           xcodebuild build \
             -project "$XCODE_PROJECT" \
             -scheme "$XCODE_SCHEME" \
             -configuration "$BUILD_CONFIG" \
             -destination 'generic/platform=iOS' \
             -derivedDataPath "$CM_BUILD_DIR/derived_data" \
-            CODE_SIGN_IDENTITY="-" \
-            CODE_SIGNING_REQUIRED=YES \
-            CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
             CODE_SIGN_ENTITLEMENTS="" \
-            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            EXPANDED_CODE_SIGN_IDENTITY="" \
             2>&1 | tee "$CM_BUILD_DIR/build.log" \
               | grep -E "error:|BUILD (SUCCEEDED|FAILED)" | head -60
 
