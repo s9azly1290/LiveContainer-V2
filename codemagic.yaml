@@ -84,7 +84,26 @@ workflows:
             fi
           done
 
-          echo "--- 4. verify ---"
+          echo "--- 4. ad-hoc sign the xcframework bundle itself ---"
+          # Xcode reports the error as "<xcframework>:1:1", which means it
+          # validates the xcframework bundle itself, not only its slices.
+          if codesign --force --sign - --timestamp=none "$XCF" >/dev/null 2>&1; then
+            echo "  ok   $XCF"
+          else
+            echo "  FAIL $XCF -- retrying with --deep"
+            if codesign --force --deep --sign - --timestamp=none "$XCF" >/dev/null 2>&1; then
+              echo "  ok   (deep)"
+            else
+              echo "  FAIL (deep)"
+            fi
+          fi
+
+          echo "--- 5. verify ---"
+          if codesign -v "$XCF" >/dev/null 2>&1; then
+            echo "  xcframework : valid"
+          else
+            echo "  xcframework : INVALID"
+          fi
           for fw in "$XCF"/*/OpenSSL.framework; do
             if [ -d "$fw" ]; then
               if codesign -v "$fw" >/dev/null 2>&1; then
