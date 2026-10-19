@@ -26,11 +26,31 @@ workflows:
           set -e
           cd "$CM_BUILD_DIR"
           git submodule sync --recursive
-          git submodule update --init --recursive
+          git submodule update --init --recursive || true
           echo "--- submodules ---"
           for d in fishhook litehook OpenSSL; do
             if [ -d "$d" ]; then echo "  $d OK"; else echo "  $d MISSING"; fi
           done
+
+      - name: Ensure OpenSSL xcframework
+        script: |
+          set -e
+          cd "$CM_BUILD_DIR"
+          # Fallback: if the submodule did not provide the
+          # xcframework, fetch just that slice from upstream.
+          if [ ! -d "OpenSSL/Frameworks/OpenSSL.xcframework" ]; then
+            echo "xcframework missing -> fetching from upstream"
+            rm -rf /tmp/ossl
+            git clone --depth 1 --single-branch \
+              https://github.com/krzyzanowskim/OpenSSL.git /tmp/ossl
+            mkdir -p OpenSSL/Frameworks
+            cp -R /tmp/ossl/Frameworks/OpenSSL.xcframework OpenSSL/Frameworks/
+            rm -rf /tmp/ossl
+            echo "xcframework restored"
+          else
+            echo "xcframework present"
+          fi
+          ls OpenSSL/Frameworks/
 
       - name: Build (unsigned)
         script: |
